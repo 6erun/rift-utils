@@ -1,0 +1,35 @@
+name: "AMD VM and Docker Configuration"
+description: "A workflow for configuring both virtual machine and Docker environments with AMD GPUs."
+
+commands:
+  - name: "DetectGpuVendorCmd"
+    environment:
+      gpu_vendor: "amd"
+  - name: "RemoveCrontabCmd"
+  - name: "CheckVirtualizationCmd"
+  - name: "AptInstallCmd"
+    environment:
+      packages:
+        - "qemu-kvm"
+        - "libvirt-daemon-system"
+        - "genisoimage"
+        - "whois"
+        - "mdadm"
+  - name: "RemoveGrubOverrideCmd"
+  - name: "InstallAmdDriverCmd"
+  - name: "InstallRocmCmd"
+  - name: "ConfigureDockerCmd"
+  - name: "ConfigureLibvirtCmd"
+  - name: "ReadGrubCmd"
+  - name: "GetIommuTypeCmd"
+  - name: "GetGpuPciIdsCmd"
+  - name: "AddGrubVirtualizationOptionsCmd"
+    environment:
+      skip_vfio_binding: true
+  - name: "UpdateInitramfsModulesCmd"
+  - name: "CreateVfioConfCmd"
+  - name: "ConfigureGpuPowerCmd"
+  - name: "ConfigureMemoryCmd"
+  - name: "ConfigureDisksCmd"
+  - name: "CreateGrubOverrideCmd"
+  - name: "VerifyGpuPowerStateCmd"

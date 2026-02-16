@@ -20,6 +20,8 @@ from commands.configure_memory import ConfigureMemoryCmd
 from commands.configure_disks import ConfigureDisksCmd
 from commands.configure_gpu_power import VerifyGpuPowerStateCmd, ConfigureGpuPowerCmd
 from commands.configure_docker import ConfigureDockerCmd
+from commands.gpu_vendor import DetectGpuVendorCmd
+from commands.amd import InstallAmdDriverCmd, InstallRocmCmd
 
 GRUB_MAIN_FILE = '/etc/default/grub'
 GRUB_D_DIR = '/etc/default/grub.d'

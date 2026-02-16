@@ -157,14 +157,15 @@ class GetGpuPciIdsCmd(BaseCmd):
     def execute(self, env: Dict[str, Any]) -> bool:
         try:
             lspci_output = subprocess.check_output(['lspci', '-nnk']).decode('utf-8')
-            nvidia_lines = [line for line in lspci_output.splitlines() if 'NVIDIA Corporation' in line]
+            lspci_pattern = env.get('gpu_lspci_pattern', 'NVIDIA Corporation')
+            gpu_lines = [line for line in lspci_output.splitlines() if lspci_pattern in line]
 
-            if not nvidia_lines:
-                print("No NVIDIA GPUs found.")
+            if not gpu_lines:
+                print(f"No GPUs found matching pattern '{lspci_pattern}'.")
                 return False
 
             pci_ids = []
-            for line in nvidia_lines:
+            for line in gpu_lines:
                 match = re.search(r'\[([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\]', line)
                 if match:
                     vendor_id = match.group(1)
@@ -226,15 +227,17 @@ class AddGrubVirtualizationOptionsCmd(BaseCmd):
             'video=efifb:off'
         ]
 
+        modules_to_blacklist = env.get('gpu_modules_to_blacklist', 'nouveau,nvidia,nvidiafb,snd_hda_intel')
+
         if not skip_vfio_binding:
             vfio_ids_str = ','.join(pci_ids)
             if vfio_ids_str:
                 new_options.append(f'vfio-pci.ids={vfio_ids_str}')
-                new_options.append('modprobe.blacklist=nouveau,nvidia,nvidiafb,snd_hda_intel')
+                new_options.append(f'modprobe.blacklist={modules_to_blacklist}')
             else:
                 print("Warning: No PCI IDs provided for VFIO binding. Skipping VFIO options.")
         else:
-            print("Skipping VFIO binding and nvidia blacklist (skip_vfio_binding=True).")
+            print("Skipping VFIO binding and module blacklist (skip_vfio_binding=True).")
 
         # Only add options that are not already present
         grub_cmdline = env['GRUB_CMDLINE_LINUX_DEFAULT']
@@ -257,7 +260,7 @@ class AddGrubVirtualizationOptionsCmd(BaseCmd):
             vfio_ids_str = ','.join(pci_ids)
             if vfio_ids_str:
                 final_options_list.append(f'vfio-pci.ids={vfio_ids_str}')
-                final_options_list.append('modprobe.blacklist=nouveau,nvidia,nvidiafb,snd_hda_intel')
+                final_options_list.append(f'modprobe.blacklist={modules_to_blacklist}')
 
         env['GRUB_CMDLINE_LINUX_DEFAULT'] = ' '.join(final_options_list)
         print(f"Updated GRUB_CMDLINE_LINUX_DEFAULT: {env['GRUB_CMDLINE_LINUX_DEFAULT']}")

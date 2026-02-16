@@ -7,61 +7,61 @@ from .utils import run
 UDEV_RULE_FILE = '/etc/udev/rules.d/99-vfio-nvidia-power.rules'
 MODPROBE_CONF_FILE = '/etc/modprobe.d/vfio-pci-power.conf'
 
-def create_gpu_power_udev_rule():
+def create_gpu_power_udev_rule(vendor_hex='0x10de', rule_file=UDEV_RULE_FILE):
     """
-    Creates udev rule to prevent NVIDIA GPU from going into deep D3 state.
+    Creates udev rule to prevent GPU from going into deep D3 state.
     Returns: 'created' if rule was created/updated, 'exists' if already correct, 'error' on failure.
     """
-    udev_rule_content = '''# Keep all NVIDIA PCI functions in D0 (no runtime suspend / no D3cold)
-# Match all NVIDIA devices and set power management
-ACTION=="add|change", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", \\
+    udev_rule_content = f'''# Keep all GPU PCI functions in D0 (no runtime suspend / no D3cold)
+# Match all devices with vendor {vendor_hex} and set power management
+ACTION=="add|change", SUBSYSTEM=="pci", ATTR{{vendor}}=="{vendor_hex}", \\
   RUN+="/bin/sh -c 'echo on > /sys$devpath/power/control 2>/dev/null || true; echo 0 > /sys$devpath/d3cold_allowed 2>/dev/null || true'"
 
 # Also handle bind events
-ACTION=="bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", \\
+ACTION=="bind", SUBSYSTEM=="pci", ATTR{{vendor}}=="{vendor_hex}", \\
   RUN+="/bin/sh -c 'echo on > /sys$devpath/power/control 2>/dev/null || true; echo 0 > /sys$devpath/d3cold_allowed 2>/dev/null || true'"
 '''
 
     try:
         # Check if rule already exists and has same content
-        if os.path.exists(UDEV_RULE_FILE):
-            with open(UDEV_RULE_FILE, 'r') as f:
+        if os.path.exists(rule_file):
+            with open(rule_file, 'r') as f:
                 existing_content = f.read()
                 if existing_content == udev_rule_content:
-                    print(f"Udev rule {UDEV_RULE_FILE} already exists with correct content.")
+                    print(f"Udev rule {rule_file} already exists with correct content.")
                     return 'exists'
 
         # Write the udev rule
-        with open(UDEV_RULE_FILE, 'w') as f:
+        with open(rule_file, 'w') as f:
             f.write(udev_rule_content)
-        print(f"Created/updated udev rule: {UDEV_RULE_FILE}")
+        print(f"Created/updated udev rule: {rule_file}")
 
         # Reload udev rules
         run(['udevadm', 'control', '--reload'], check=True)
         print("Reloaded udev rules.")
 
         # Trigger udev for existing devices
-        run(['udevadm', 'trigger', '--subsystem-match=pci', '--attr-match=vendor=0x10de'], check=False)
-        print("Triggered udev for existing NVIDIA devices.")
+        run(['udevadm', 'trigger', '--subsystem-match=pci', f'--attr-match=vendor={vendor_hex}'], check=False)
+        print(f"Triggered udev for existing devices (vendor={vendor_hex}).")
 
         return 'created'
     except IOError as e:
-        print(f"Error writing udev rule to {UDEV_RULE_FILE}: {e}")
+        print(f"Error writing udev rule to {rule_file}: {e}")
         return 'error'
     except subprocess.CalledProcessError as e:
         print(f"Error reloading udev rules: {e}")
         return 'error'
 
-def apply_gpu_power_settings_immediately():
+def apply_gpu_power_settings_immediately(vendor_hex='0x10de'):
     """
-    Immediately apply GPU power settings to all NVIDIA devices.
+    Immediately apply GPU power settings to all devices matching the vendor.
     """
     try:
         # Use a shell command to apply settings
         # Single line command to avoid shell parsing issues
-        cmd = 'for dev in /sys/bus/pci/devices/*/vendor; do [ "$(cat $dev 2>/dev/null)" = "0x10de" ] && pci=${dev%/vendor} && echo on > $pci/power/control 2>/dev/null && echo 0 > $pci/d3cold_allowed 2>/dev/null && echo "  Configured: $(basename $pci)"; done'
+        cmd = f'for dev in /sys/bus/pci/devices/*/vendor; do [ "$(cat $dev 2>/dev/null)" = "{vendor_hex}" ] && pci=${{dev%/vendor}} && echo on > $pci/power/control 2>/dev/null && echo 0 > $pci/d3cold_allowed 2>/dev/null && echo "  Configured: $(basename $pci)"; done'
 
-        print("Applying power settings to NVIDIA devices...")
+        print(f"Applying power settings to GPU devices (vendor={vendor_hex})...")
         stdout, stderr, returncode = run(['sh', '-c', cmd], capture_output=True, check=False)
 
         if stdout:
@@ -106,7 +106,7 @@ def create_vfio_pci_power_conf():
         print(f"Error writing modprobe conf to {MODPROBE_CONF_FILE}: {e}")
         return 'error'
 
-def verify_gpu_power_state():
+def verify_gpu_power_state(vendor_short='10de', rule_file=UDEV_RULE_FILE):
     """
     Verifies that GPU power management is correctly configured.
     """
@@ -114,10 +114,10 @@ def verify_gpu_power_state():
     verification_passed = True
 
     # Check if udev rule exists
-    if os.path.exists(UDEV_RULE_FILE):
-        print(f"✓ Udev rule exists: {UDEV_RULE_FILE}")
+    if os.path.exists(rule_file):
+        print(f"✓ Udev rule exists: {rule_file}")
     else:
-        print(f"✗ Udev rule missing: {UDEV_RULE_FILE}")
+        print(f"✗ Udev rule missing: {rule_file}")
         verification_passed = False
 
     # Check if modprobe conf exists
@@ -129,18 +129,18 @@ def verify_gpu_power_state():
 
     # Check current GPU power states
     try:
-        # Find NVIDIA GPU devices
-        lspci_output = subprocess.check_output(['lspci', '-d', '10de:', '-D'], text=True)
-        nvidia_devices = []
+        # Find GPU devices by vendor
+        lspci_output = subprocess.check_output(['lspci', '-d', f'{vendor_short}:', '-D'], text=True)
+        gpu_devices = []
         for line in lspci_output.strip().split('\n'):
             if line:
                 # Extract PCI address (e.g., 0000:01:00.0)
                 pci_addr = line.split()[0]
-                nvidia_devices.append(pci_addr)
+                gpu_devices.append(pci_addr)
 
-        if nvidia_devices:
-            print(f"\nFound {len(nvidia_devices)} NVIDIA device(s):")
-            for device in nvidia_devices:
+        if gpu_devices:
+            print(f"\nFound {len(gpu_devices)} GPU device(s) (vendor={vendor_short}):")
+            for device in gpu_devices:
                 # Check power control
                 power_control_path = f'/sys/bus/pci/devices/{device}/power/control'
                 d3cold_path = f'/sys/bus/pci/devices/{device}/d3cold_allowed'
@@ -165,7 +165,7 @@ def verify_gpu_power_state():
                     else:
                         print(" ✓")
         else:
-            print("\nNo NVIDIA devices found in the system.")
+            print(f"\nNo GPU devices found for vendor {vendor_short}.")
     except subprocess.CalledProcessError as e:
         print(f"\nError checking GPU devices: {e}")
         verification_passed = False
@@ -182,10 +182,12 @@ class CreateGpuPowerUdevRuleCmd(BaseCmd):
         return "Create GPU Power Udev Rule"
 
     def description(self) -> str:
-        return "Creates udev rule to prevent NVIDIA GPUs from entering D3 power state."
+        return "Creates udev rule to prevent GPUs from entering D3 power state."
 
     def execute(self, env: Dict[str, Any]) -> bool:
-        result = create_gpu_power_udev_rule()
+        vendor_hex = env.get('gpu_pci_vendor_hex', '0x10de')
+        rule_file = env.get('gpu_udev_rule_file', UDEV_RULE_FILE)
+        result = create_gpu_power_udev_rule(vendor_hex, rule_file)
         if result == 'error':
             print("Failed to create GPU power udev rule.")
             return False
@@ -227,7 +229,9 @@ class VerifyGpuPowerStateCmd(BaseCmd):
         return "Verifies that GPU power management is correctly configured."
 
     def execute(self, env: Dict[str, Any]) -> bool:
-        return verify_gpu_power_state()
+        vendor_short = env.get('gpu_pci_vendor_short', '10de')
+        rule_file = env.get('gpu_udev_rule_file', UDEV_RULE_FILE)
+        return verify_gpu_power_state(vendor_short, rule_file)
 
 class ConfigureGpuPowerCmd(BaseCmd):
     """Combined command to configure GPU power management."""
@@ -239,11 +243,15 @@ class ConfigureGpuPowerCmd(BaseCmd):
         return "Configures udev rules and modprobe settings to prevent GPUs from entering D3 state."
 
     def execute(self, env: Dict[str, Any]) -> bool:
+        vendor_hex = env.get('gpu_pci_vendor_hex', '0x10de')
+        vendor_short = env.get('gpu_pci_vendor_short', '10de')
+        rule_file = env.get('gpu_udev_rule_file', UDEV_RULE_FILE)
+
         # Track if we had any errors
         had_error = False
 
         # Create udev rule
-        udev_result = create_gpu_power_udev_rule()
+        udev_result = create_gpu_power_udev_rule(vendor_hex, rule_file)
         if udev_result == 'error':
             print("Error: Failed to create udev rule.")
             had_error = True
@@ -259,10 +267,10 @@ class ConfigureGpuPowerCmd(BaseCmd):
             print("Note: Modprobe conf was already configured.")
 
         # Apply settings immediately (may show warnings but that's OK)
-        apply_gpu_power_settings_immediately()
+        apply_gpu_power_settings_immediately(vendor_hex)
 
         # Verify configuration - this is the real test
-        verification_passed = verify_gpu_power_state()
+        verification_passed = verify_gpu_power_state(vendor_short, rule_file)
 
         if had_error:
             print("\nErrors occurred during configuration.")
@@ -273,7 +281,7 @@ class ConfigureGpuPowerCmd(BaseCmd):
         else:
             print("\nWarning: Some verification checks failed. Settings have been applied but may require a reboot for full effect.")
             # Return True anyway if the files were created, as the settings will take effect on reboot
-            if os.path.exists(UDEV_RULE_FILE) and os.path.exists(MODPROBE_CONF_FILE):
+            if os.path.exists(rule_file) and os.path.exists(MODPROBE_CONF_FILE):
                 print("Configuration files are in place. Settings will be fully applied after reboot.")
                 return True
             return False
