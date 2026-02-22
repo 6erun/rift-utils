@@ -12,6 +12,8 @@ commands:
         - "genisoimage"
         - "whois"
         - "mdadm"
+  - name: "InstallHweKernelCmd"
+  - name: "InstallOvmfCmd"
   - name: "RemoveGrubOverrideCmd"
   - name: "InstallNvidiaDriverCmd"
   - name: "ConfigureDockerCmd"

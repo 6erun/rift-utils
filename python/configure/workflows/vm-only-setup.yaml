@@ -13,6 +13,8 @@ commands:
         - "genisoimage"
         - "whois"
         - "mdadm"
+  - name: "InstallHweKernelCmd"
+  - name: "InstallOvmfCmd"
   - name: "ConfigureDockerCmd"
   - name: "ConfigureLibvirtCmd"
   - name: "ReadGrubCmd"
