@@ -112,21 +112,30 @@ def install_ovmf_from_noble() -> bool:
 
         # Fix up symlinks (the Noble package ships .ms.fd as a symlink to
         # .secboot.fd, but the Jammy package has them as separate files).
+        # Ensure each alias has the same content as its target.
         for link_name, target in OVMF_SYMLINKS.items():
             link_path = os.path.join(OVMF_DIR, link_name)
             target_path = os.path.join(OVMF_DIR, target)
             if not os.path.exists(target_path):
                 continue
+
+            # Resolve the effective content: follow symlinks for md5 check.
+            if os.path.exists(link_path):
+                real_link = os.path.realpath(link_path)
+                real_target = os.path.realpath(target_path)
+                if real_link == real_target or _file_md5(real_link) == _file_md5(real_target):
+                    print(f"  {link_name}: already matches {target}.")
+                    continue
+
             if os.path.islink(link_path):
                 os.remove(link_path)
             elif os.path.exists(link_path):
-                # Replace the regular file with the secboot content.
-                if _file_md5(link_path) != _file_md5(target_path):
-                    backup = link_path + ".bak"
-                    print(f"  {link_name}: backing up to {backup}")
-                    shutil.copy2(link_path, backup)
-                print(f"  {link_name}: replacing with {target}")
-                shutil.copy2(target_path, link_path)
+                backup = link_path + ".bak"
+                print(f"  {link_name}: backing up to {backup}")
+                shutil.copy2(link_path, backup)
+
+            print(f"  {link_name}: replacing with {target}")
+            shutil.copy2(target_path, link_path)
 
     print(f"OVMF {min_str} firmware files installed successfully.")
     return True
