@@ -15,6 +15,7 @@ commands:
         - "mdadm"
   - name: "InstallHweKernelCmd"
   - name: "InstallOvmfCmd"
+  - name: "UpgradeQemuCmd"
   - name: "ConfigureDockerCmd"
   - name: "ConfigureLibvirtCmd"
   - name: "ReadGrubCmd"

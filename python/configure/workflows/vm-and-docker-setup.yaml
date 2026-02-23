@@ -14,6 +14,7 @@ commands:
         - "mdadm"
   - name: "InstallHweKernelCmd"
   - name: "InstallOvmfCmd"
+  - name: "UpgradeQemuCmd"
   - name: "RemoveGrubOverrideCmd"
   - name: "InstallNvidiaDriverCmd"
   - name: "ConfigureDockerCmd"
