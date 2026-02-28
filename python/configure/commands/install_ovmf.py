@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import urllib.request
 from typing import Any, Dict
 from .cmd import BaseCmd
 from .utils import run
@@ -12,7 +13,7 @@ from .utils import run
 
 OVMF_DIR = "/usr/share/OVMF"
 OVMF_NOBLE_URL = (
-    "http://archive.ubuntu.com/ubuntu/pool/main/e/edk2/ovmf_2024.02-2_all.deb"
+    "https://archive.ubuntu.com/ubuntu/pool/main/e/edk2/ovmf_2024.02-2_all.deb"
 )
 
 # Minimum required edk2 version (year, month).
@@ -78,7 +79,7 @@ def install_ovmf_from_noble() -> bool:
 
         min_str = f"{MIN_OVMF_VERSION[0]}.{MIN_OVMF_VERSION[1]:02d}"
         print(f"Downloading OVMF {min_str} from Ubuntu Noble...")
-        run(["wget", "-q", "-O", deb_path, OVMF_NOBLE_URL])
+        urllib.request.urlretrieve(OVMF_NOBLE_URL, deb_path)
 
         print("Extracting package...")
         os.makedirs(extract_dir)
@@ -110,32 +111,32 @@ def install_ovmf_from_noble() -> bool:
             print(f"  {fname}: installing")
             shutil.copy2(src, dst)
 
-        # Fix up symlinks (the Noble package ships .ms.fd as a symlink to
-        # .secboot.fd, but the Jammy package has them as separate files).
-        # Ensure each alias has the same content as its target.
+        # Ensure each alias is a symlink to its target, matching Noble's layout.
         for link_name, target in OVMF_SYMLINKS.items():
             link_path = os.path.join(OVMF_DIR, link_name)
             target_path = os.path.join(OVMF_DIR, target)
             if not os.path.exists(target_path):
                 continue
 
-            # Resolve the effective content: follow symlinks for md5 check.
-            if os.path.exists(link_path):
-                real_link = os.path.realpath(link_path)
-                real_target = os.path.realpath(target_path)
-                if real_link == real_target or _file_md5(real_link) == _file_md5(real_target):
-                    print(f"  {link_name}: already matches {target}.")
-                    continue
+            if os.path.lexists(link_path):
+                # If it's already a symlink that resolves to the same target, keep it.
+                if os.path.islink(link_path):
+                    real_link = os.path.realpath(link_path)
+                    real_target = os.path.realpath(target_path)
+                    if real_link == real_target:
+                        print(f"  {link_name}: already matches {target}.")
+                        continue
+                    else:
+                        os.remove(link_path)
+                else:
+                    # Back up existing non-symlink before replacing.
+                    backup = link_path + ".bak"
+                    print(f"  {link_name}: backing up to {backup}")
+                    shutil.copy2(link_path, backup)
+                    os.remove(link_path)
 
-            if os.path.islink(link_path):
-                os.remove(link_path)
-            elif os.path.exists(link_path):
-                backup = link_path + ".bak"
-                print(f"  {link_name}: backing up to {backup}")
-                shutil.copy2(link_path, backup)
-
-            print(f"  {link_name}: replacing with {target}")
-            shutil.copy2(target_path, link_path)
+            print(f"  {link_name}: creating symlink to {target}")
+            os.symlink(target, link_path)
 
     print(f"OVMF {min_str} firmware files installed successfully.")
     return True
@@ -157,6 +158,7 @@ class InstallOvmfCmd(BaseCmd):
     def execute(self, env: Dict[str, Any]) -> bool:
         if not os.path.isdir(OVMF_DIR):
             print(f"OVMF directory {OVMF_DIR} does not exist. Installing ovmf package first.")
+            run(["apt-get", "update"])
             run(["apt-get", "install", "-y", "ovmf"])
 
         if not ovmf_needs_upgrade():
