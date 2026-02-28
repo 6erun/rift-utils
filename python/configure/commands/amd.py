@@ -1,4 +1,3 @@
-import os
 from typing import Any, Dict
 from .cmd import BaseCmd
 from .utils import run, reboot_prompt, yes_no_prompt
@@ -42,6 +41,27 @@ def check_amdgpu_install_present():
     """
     output, _, return_code = run("which amdgpu-install", shell=True, capture_output=True, check=False)
     return return_code == 0 and output
+
+
+def remove_amdgpu_driver():
+    """
+    Remove the AMD GPU driver and associated packages.
+    """
+    if check_amdgpu():
+        print("AMD GPU driver is in use. Attempting to remove it.")
+
+        # Use amdgpu-install --uninstall if available
+        if check_amdgpu_install_present():
+            print("Running amdgpu-install --uninstall...")
+            run(["amdgpu-install", "--uninstall", "-y"], check=False)
+        else:
+            print("amdgpu-install not found, removing packages manually...")
+            run(["apt-get", "remove", "--purge", "-y", "amdgpu-dkms"], check=False)
+            run(["apt-get", "autoremove", "-y"], check=False)
+
+        reboot_prompt()
+    else:
+        print("AMD GPU driver does not appear to be in use.")
 
 
 def install_amdgpu_driver():
@@ -91,6 +111,20 @@ def install_rocm():
     return True
 
 
+class RemoveAmdDriverCmd(BaseCmd):
+    """Command to remove AMD GPU driver."""
+
+    def name(self) -> str:
+        return "Remove AMD GPU Driver"
+
+    def description(self) -> str:
+        return "Checks for and removes AMD GPU drivers if they are installed."
+
+    def execute(self, env: Dict[str, Any]) -> bool:
+        remove_amdgpu_driver()
+        return True
+
+
 class InstallAmdDriverCmd(BaseCmd):
     """Command to install AMD GPU DKMS driver."""
 
@@ -118,6 +152,10 @@ class InstallRocmCmd(BaseCmd):
         return "Installs the ROCm toolkit using amdgpu-install."
 
     def execute(self, env: Dict[str, Any]) -> bool:
+        if not check_amdgpu():
+            print("AMD GPU driver is not loaded. Please install the driver first.")
+            return False
+
         if check_amdgpu_installed():
             if not yes_no_prompt("ROCm tools are already installed. Do you want to reinstall?", False):
                 return True

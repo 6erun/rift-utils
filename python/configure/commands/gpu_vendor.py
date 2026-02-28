@@ -15,7 +15,7 @@ GPU_VENDORS = {
         "pci_vendor_hex": "0x1002",
         "pci_vendor_short": "1002",
         "lspci_pattern": "Advanced Micro Devices",
-        "modules_to_blacklist": "amdgpu,radeon",
+        "modules_to_blacklist": "amdgpu,radeon,snd_hda_intel",
         "management_tool": "rocm-smi",
         "udev_rule_file": "/etc/udev/rules.d/99-vfio-amd-power.rules",
     },
@@ -37,7 +37,7 @@ def detect_gpu_vendor() -> Optional[str]:
     has_amd = False
 
     for line in output.splitlines():
-        if 'NVIDIA Corporation' in line:
+        if 'NVIDIA Corporation' in line and ('VGA' in line or 'Display' in line or '3D' in line):
             has_nvidia = True
         if 'Advanced Micro Devices' in line and ('VGA' in line or 'Display' in line or '3D' in line):
             has_amd = True
