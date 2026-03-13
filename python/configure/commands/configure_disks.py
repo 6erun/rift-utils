@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+from dataclasses import dataclass
+from enum import Enum
 import os
 from typing import Any, Dict, Optional, Tuple
 
@@ -8,6 +10,21 @@ from .utils import run, add_mp_to_fstab, CLOUDRIFT_MEDIA_MOUNT
 import json
 import shutil
 import subprocess
+
+
+class DiskType(str, Enum):
+    SSD = "ssd"
+    HDD = "hdd"
+    NVME = "nvme"
+
+
+@dataclass(frozen=True)
+class DiskInfo:
+    path: str
+    type: str
+    mountpoint: Optional[str]
+    rota: Optional[str]
+    tran: str
 
 
 def get_lvm_free_space() -> Optional[Tuple[str, float]]:
@@ -55,15 +72,15 @@ def create_lvm_logical_volume(vg_name: str) -> str:
     print(f"Created logical volume: {lv_path}")
     return lv_path
 
-def find_unused_whole_disks(add_dev_prefix=False):
+def find_unused_whole_disks() -> list[DiskInfo]:
     # Use lsblk JSON; suppress stderr warnings like "not a block device"
     out, _, _ = run(
-        ["lsblk", "-J", "-o", "NAME,TYPE,MOUNTPOINT"],
+        ["lsblk", "-J", "-o", "NAME,TYPE,MOUNTPOINT,ROTA,TRAN"],
         capture_output=True,
         quiet_stderr=True,
     )
     data = json.loads(out)
-    disks = []
+    disks: list[DiskInfo] = []
     for dev in data.get("blockdevices", []):
         # Select only whole disks: type=="disk", no children, no mountpoint
         if (
@@ -74,7 +91,15 @@ def find_unused_whole_disks(add_dev_prefix=False):
             name = dev.get("name")
             if not name:
                 continue
-            disks.append(f"/dev/{name}" if add_dev_prefix else name)
+            disks.append(
+                DiskInfo(
+                    path=f"/dev/{name}",
+                    type=str(dev.get("type", "")),
+                    mountpoint=dev.get("mountpoint"),
+                    rota=str(dev.get("rota")) if dev.get("rota") is not None else None,
+                    tran=str(dev.get("tran", "")).lower(),
+                )
+            )
     return disks
 
 def reload_daemon():
@@ -100,9 +125,35 @@ def create_filesystem(dev, label="cloudrift"):
     # Use -m 0 to reserve 0% for root (maximizing available space)
     run(["mkfs.ext4", "-m", "0", "-L", label, dev])
 
+def check_disk_type(disks: list[DiskInfo], disk_type: DiskType) -> bool:
+    if not disks:
+        return False
+
+    if not isinstance(disk_type, DiskType):
+        return False
+
+    for disk in disks:
+        if disk.type != "disk":
+            return False
+
+        rota = (disk.rota or "").strip()
+        transport = disk.tran.strip().lower()
+        is_nvme = transport == "nvme" or os.path.basename(disk.path).startswith("nvme")
+        is_hdd = rota == "1"
+        is_ssd = rota == "0"
+
+        if disk_type == DiskType.NVME and not is_nvme:
+            return False
+        if disk_type == DiskType.HDD and not is_hdd:
+            return False
+        if disk_type == DiskType.SSD and not is_ssd:
+            return False
+
+    return True
+
 def create_raid_array(disks):
     cmd = ["mdadm", "--create", "--verbose", "/dev/md0", "--level=0", "--raid-devices={}".format(len(disks))]
-    devices = ["/dev/"+disk for disk in disks]
+    devices = [disk.path for disk in disks]
     print("Creating RAID 0 array with devices: {}".format(devices))
     cmd.extend(devices)
     run(cmd)
@@ -138,23 +189,23 @@ def configure_lvm_storage(vg_name: str, free_gb: float) -> None:
     print(f"Successfully configured LVM logical volume at {CLOUDRIFT_MEDIA_MOUNT}")
 
 
-def configure_regular_disks(disks: list) -> None:
+def configure_regular_disks(disks: list[DiskInfo]) -> None:
     """
     Configure storage using regular disks (single disk or RAID).
 
     Args:
-        disks: List of unused disk names
+        disks: List of unused disk metadata
 
     Raises:
         RuntimeError: If no disks are available
     """
-    print(f"Detected unused whole disks: {disks}")
+    print(f"Detected unused whole disks: {[disk.path for disk in disks]}")
 
     if len(disks) == 0:
         raise RuntimeError("No unused disks and no LVM free space available. Unable to configure storage automatically.")
     elif len(disks) == 1:
         # Single disk setup
-        disk_path = f"/dev/{disks[0]}"
+        disk_path = disks[0].path
         print(f"Using single disk: {disk_path}")
 
         create_filesystem(disk_path)
@@ -162,7 +213,7 @@ def configure_regular_disks(disks: list) -> None:
         add_to_fstab(disk_path, CLOUDRIFT_MEDIA_MOUNT)
         reload_daemon()
         print(f"Successfully configured single disk at {CLOUDRIFT_MEDIA_MOUNT}")
-    else:
+    elif check_disk_type(disks, DiskType.NVME):
         # Multiple disks - create RAID
         create_raid_array(disks)
         create_filesystem("/dev/md0")
@@ -170,7 +221,12 @@ def configure_regular_disks(disks: list) -> None:
         add_to_fstab("/dev/md0", CLOUDRIFT_MEDIA_MOUNT)
         reload_daemon()
         print(f"Successfully configured RAID array at {CLOUDRIFT_MEDIA_MOUNT}")
-
+    else:
+        print("No valid disk configuration found (e.g. multiple NVMe disks for RAID). Please configure disks manually.")
+        print("Root mount point will be used for storage. Consider adding more disks or freeing up LVM space for better performance and capacity.")
+        print("Found disks:")
+        for disk in disks:
+            print(f"  - {disk.path} (type={disk.type}, rota={disk.rota}, tran={disk.tran})")
 
 def configure_disks():
     """
@@ -191,7 +247,7 @@ def configure_disks():
         configure_lvm_storage(vg_name, free_gb)
     else:
         # No LVM free space, check for unused disks
-        disks = find_unused_whole_disks(add_dev_prefix=False)
+        disks = find_unused_whole_disks()
         configure_regular_disks(disks)
 
 class ConfigureDisksCmd(BaseCmd):
