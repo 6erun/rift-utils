@@ -82,6 +82,55 @@ def create_lvm_logical_volume(vg_name: str) -> str:
     print(f"Created logical volume: {lv_path}")
     return lv_path
 
+RAID_TYPES = {"raid0", "raid1", "raid4", "raid5", "raid6", "raid10", "md"}
+
+def _has_any_mountpoint(dev: dict) -> bool:
+    """Recursively check if a device or any of its children has a mountpoint."""
+    if dev.get("mountpoint") not in (None, ""):
+        return True
+    for child in dev.get("children", []):
+        if _has_any_mountpoint(child):
+            return True
+    return False
+
+def find_available_md_arrays() -> list[DiskInfo]:
+    """
+    Return md/RAID arrays that exist as top-level block devices, are fully
+    unmounted (no mountpoints anywhere in their subtree), and have a non-zero size.
+    """
+    out, _, _ = run(
+        ["lsblk", "-J", "-b", "-o", "NAME,TYPE,MOUNTPOINT,ROTA,TRAN,SIZE"],
+        capture_output=True,
+        quiet_stderr=True,
+    )
+    if not out:
+        return []
+    data = json.loads(out)
+    arrays: list[DiskInfo] = []
+    for dev in data.get("blockdevices", []):
+        if dev.get("type") not in RAID_TYPES:
+            continue
+        if _has_any_mountpoint(dev):
+            continue
+        raw_size = dev.get("size")
+        size_bytes = int(raw_size) if raw_size else None
+        if size_bytes == 0:
+            continue
+        name = dev.get("name")
+        if not name:
+            continue
+        arrays.append(
+            DiskInfo(
+                path=f"/dev/{name}",
+                type=str(dev.get("type", "")),
+                mountpoint=None,
+                rota=None,
+                tran="",
+                size_bytes=size_bytes,
+            )
+        )
+    return arrays
+
 def find_unused_whole_disks() -> list[DiskInfo]:
     # Use lsblk JSON; suppress stderr warnings like "not a block device"
     out, _, _ = run(
@@ -281,10 +330,32 @@ def configure_disks(min_disk_space_gb: float = 10.0):
         # Use LVM free space
         vg_name, free_gb = lvm_info
         configure_lvm_storage(vg_name, free_gb)
-    else:
-        # No LVM free space, check for unused disks
-        disks = find_unused_whole_disks()
-        configure_regular_disks(disks, min_disk_space_gb)
+        return
+
+    # Check for existing unmounted RAID/md arrays
+    md_arrays = find_available_md_arrays()
+    eligible_arrays = [a for a in md_arrays if a.size_gb is not None and a.size_gb >= min_disk_space_gb]
+    if eligible_arrays:
+        # Use the largest eligible array
+        array = max(eligible_arrays, key=lambda a: a.size_bytes or 0)
+        print(f"Found existing RAID array {array.path} ({array.size_gb:.1f}GB), using it for storage.")
+        if yes_no_prompt(f"Format and mount {array.path} as CloudRift storage?", default=True) is False:
+            print("Operation cancelled by user.")
+            return
+        create_filesystem(array.path)
+        mount_media_disk(array.path, CLOUDRIFT_MEDIA_MOUNT)
+        add_to_fstab(array.path, CLOUDRIFT_MEDIA_MOUNT)
+        reload_daemon()
+        print(f"Successfully configured RAID array {array.path} at {CLOUDRIFT_MEDIA_MOUNT}")
+        return
+
+    skipped_arrays = [a for a in md_arrays if a not in eligible_arrays]
+    for a in skipped_arrays:
+        print(f"Skipping existing RAID array {a.path} ({a.size_gb:.1f}GB) — below minimum {min_disk_space_gb:.1f}GB")
+
+    # No LVM free space or eligible RAID array — check for unused whole disks
+    disks = find_unused_whole_disks()
+    configure_regular_disks(disks, min_disk_space_gb)
 
 class ConfigureDisksCmd(BaseCmd):
     """ Command to configure disks. """
