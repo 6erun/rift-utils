@@ -93,10 +93,38 @@ def _has_any_mountpoint(dev: dict) -> bool:
             return True
     return False
 
+def _collect_md_devices(dev: dict, seen: set, result: list) -> None:
+    """
+    Recursively walk a device tree and collect md/RAID devices that are
+    fully unmounted, haven't been seen yet, and have a non-zero size.
+    """
+    dev_type = dev.get("type", "")
+    name = dev.get("name")
+    if dev_type in RAID_TYPES and name and name not in seen:
+        seen.add(name)
+        if not _has_any_mountpoint(dev):
+            raw_size = dev.get("size")
+            size_bytes = int(raw_size) if raw_size else None
+            if size_bytes:
+                result.append(
+                    DiskInfo(
+                        path=f"/dev/{name}",
+                        type=dev_type,
+                        mountpoint=None,
+                        rota=None,
+                        tran="",
+                        size_bytes=size_bytes,
+                    )
+                )
+    for child in dev.get("children", []):
+        _collect_md_devices(child, seen, result)
+
 def find_available_md_arrays() -> list[DiskInfo]:
     """
-    Return md/RAID arrays that exist as top-level block devices, are fully
-    unmounted (no mountpoints anywhere in their subtree), and have a non-zero size.
+    Return md/RAID arrays found anywhere in the device tree that are fully
+    unmounted (no mountpoints anywhere in their subtree) and have a non-zero size.
+    Walks recursively because md devices appear as children of their member disks,
+    not necessarily as top-level block devices.
     """
     out, _, _ = run(
         ["lsblk", "-J", "-b", "-o", "NAME,TYPE,MOUNTPOINT,ROTA,TRAN,SIZE"],
@@ -107,28 +135,9 @@ def find_available_md_arrays() -> list[DiskInfo]:
         return []
     data = json.loads(out)
     arrays: list[DiskInfo] = []
+    seen: set[str] = set()
     for dev in data.get("blockdevices", []):
-        if dev.get("type") not in RAID_TYPES:
-            continue
-        if _has_any_mountpoint(dev):
-            continue
-        raw_size = dev.get("size")
-        size_bytes = int(raw_size) if raw_size else None
-        if size_bytes == 0:
-            continue
-        name = dev.get("name")
-        if not name:
-            continue
-        arrays.append(
-            DiskInfo(
-                path=f"/dev/{name}",
-                type=str(dev.get("type", "")),
-                mountpoint=None,
-                rota=None,
-                tran="",
-                size_bytes=size_bytes,
-            )
-        )
+        _collect_md_devices(dev, seen, arrays)
     return arrays
 
 def find_unused_whole_disks() -> list[DiskInfo]:
