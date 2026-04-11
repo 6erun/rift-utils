@@ -6,7 +6,7 @@ import os
 from typing import Any, Dict, Optional, Tuple
 
 from .cmd import BaseCmd
-from .utils import run, add_mp_to_fstab, CLOUDRIFT_MEDIA_MOUNT
+from .utils import run, add_mp_to_fstab, CLOUDRIFT_MEDIA_MOUNT, yes_no_prompt
 import json
 import shutil
 import subprocess
@@ -168,6 +168,10 @@ def configure_lvm_storage(vg_name: str, free_gb: float) -> None:
     """
     print(f"Using LVM free space: {free_gb:.1f}GB in volume group '{vg_name}'")
 
+    if yes_no_prompt("Do you want to proceed?", default=True) is False:
+        print("Operation cancelled by user.")    
+        return None  # Not an error, just cancelled
+
     # Create logical volume
     lv_path = create_lvm_logical_volume(vg_name)
 
@@ -208,6 +212,10 @@ def configure_regular_disks(disks: list[DiskInfo]) -> None:
         disk_path = disks[0].path
         print(f"Using single disk: {disk_path}")
 
+        if yes_no_prompt("Do you want to proceed?", default=True) is False:
+            print("Operation cancelled by user.")    
+            return None  # Not an error, just cancelled
+
         create_filesystem(disk_path)
         mount_media_disk(disk_path, CLOUDRIFT_MEDIA_MOUNT)
         add_to_fstab(disk_path, CLOUDRIFT_MEDIA_MOUNT)
@@ -215,6 +223,10 @@ def configure_regular_disks(disks: list[DiskInfo]) -> None:
         print(f"Successfully configured single disk at {CLOUDRIFT_MEDIA_MOUNT}")
     elif check_disk_type(disks, DiskType.NVME):
         # Multiple disks - create RAID
+        print(f"Multiple NVMe disks detected: {[disk.path for disk in disks]}")
+        if yes_no_prompt("Do you want to proceed?", default=True) is False:
+            print("Operation cancelled by user.")    
+            return None  # Not an error, just cancelled
         create_raid_array(disks)
         create_filesystem("/dev/md0")
         mount_media_disk("/dev/md0", CLOUDRIFT_MEDIA_MOUNT)
