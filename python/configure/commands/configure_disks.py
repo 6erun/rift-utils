@@ -12,6 +12,8 @@ import shutil
 import subprocess
 
 
+MIN_DISK_SPACE_GB = 1000.0
+
 class DiskType(str, Enum):
     SSD = "ssd"
     HDD = "hdd"
@@ -25,9 +27,16 @@ class DiskInfo:
     mountpoint: Optional[str]
     rota: Optional[str]
     tran: str
+    size_bytes: Optional[int] = None
+
+    @property
+    def size_gb(self) -> Optional[float]:
+        if self.size_bytes is None:
+            return None
+        return self.size_bytes / (1024 ** 3)
 
 
-def get_lvm_free_space() -> Optional[Tuple[str, float]]:
+def get_lvm_free_space(min_disk_space_gb: float = MIN_DISK_SPACE_GB) -> Optional[Tuple[str, float]]:
     """
     Check for free space in LVM volume groups.
     Returns (vg_name, free_gb) or None if no free space available.
@@ -46,10 +55,11 @@ def get_lvm_free_space() -> Optional[Tuple[str, float]]:
             # Parse free space value (remove 'g' suffix and convert to float)
             free_gb = float(vg_free.rstrip('g'))
 
-            # If there's significant free space (> 10GB), we can use it
-            if free_gb > 10:
-                print(f"Found {free_gb:.1f}GB free space in volume group '{vg_name}'")
+            if free_gb >= min_disk_space_gb:
+                print(f"Found {free_gb:.1f}GB free space in volume group '{vg_name}' (minimum required: {min_disk_space_gb:.1f}GB)")
                 return vg_name, free_gb
+            else:
+                print(f"Volume group '{vg_name}' has {free_gb:.1f}GB free — below minimum {min_disk_space_gb:.1f}GB, skipping.")
 
     except (subprocess.CalledProcessError, json.JSONDecodeError, ValueError) as e:
         print(f"Could not check LVM free space: {e}")
@@ -75,7 +85,7 @@ def create_lvm_logical_volume(vg_name: str) -> str:
 def find_unused_whole_disks() -> list[DiskInfo]:
     # Use lsblk JSON; suppress stderr warnings like "not a block device"
     out, _, _ = run(
-        ["lsblk", "-J", "-o", "NAME,TYPE,MOUNTPOINT,ROTA,TRAN"],
+        ["lsblk", "-J", "-b", "-o", "NAME,TYPE,MOUNTPOINT,ROTA,TRAN,SIZE"],
         capture_output=True,
         quiet_stderr=True,
     )
@@ -91,6 +101,8 @@ def find_unused_whole_disks() -> list[DiskInfo]:
             name = dev.get("name")
             if not name:
                 continue
+            raw_size = dev.get("size")
+            size_bytes = int(raw_size) if raw_size is not None else None
             disks.append(
                 DiskInfo(
                     path=f"/dev/{name}",
@@ -98,6 +110,7 @@ def find_unused_whole_disks() -> list[DiskInfo]:
                     mountpoint=dev.get("mountpoint"),
                     rota=str(dev.get("rota")) if dev.get("rota") is not None else None,
                     tran=str(dev.get("tran", "")).lower(),
+                    size_bytes=size_bytes,
                 )
             )
     return disks
@@ -193,16 +206,22 @@ def configure_lvm_storage(vg_name: str, free_gb: float) -> None:
     print(f"Successfully configured LVM logical volume at {CLOUDRIFT_MEDIA_MOUNT}")
 
 
-def configure_regular_disks(disks: list[DiskInfo]) -> None:
+def configure_regular_disks(disks: list[DiskInfo], min_disk_space_gb: float = 10.0) -> None:
     """
     Configure storage using regular disks (single disk or RAID).
 
     Args:
         disks: List of unused disk metadata
+        min_disk_space_gb: Minimum required disk size in GB
 
     Raises:
         RuntimeError: If no disks are available
     """
+    eligible = [d for d in disks if d.size_gb is None or d.size_gb >= min_disk_space_gb]
+    skipped = [d for d in disks if d.size_gb is not None and d.size_gb < min_disk_space_gb]
+    for d in skipped:
+        print(f"Skipping {d.path} ({d.size_gb:.1f}GB) — below minimum {min_disk_space_gb:.1f}GB")
+    disks = eligible
     print(f"Detected unused whole disks: {[disk.path for disk in disks]}")
 
     if len(disks) == 0:
@@ -240,18 +259,23 @@ def configure_regular_disks(disks: list[DiskInfo]) -> None:
         for disk in disks:
             print(f"  - {disk.path} (type={disk.type}, rota={disk.rota}, tran={disk.tran})")
 
-def configure_disks():
+def configure_disks(min_disk_space_gb: float = 10.0):
     """
     Configure disks for CloudRift storage.
     Checks for LVM free space first, then falls back to regular disks.
+
+    Args:
+        min_disk_space_gb: Minimum required free/disk space in GB to consider a disk or LVM VG eligible.
     """
     # Validate dependencies we directly call
     for bin_name in ("lsblk", "systemctl", "bash", "vgs", "lvcreate"):
         if shutil.which(bin_name) is None:
             raise RuntimeError(f"Missing required command: {bin_name}")
 
+    print(f"Minimum required disk space: {min_disk_space_gb:.1f}GB")
+
     # First, check if there's free space in LVM
-    lvm_info = get_lvm_free_space()
+    lvm_info = get_lvm_free_space(min_disk_space_gb)
 
     if lvm_info:
         # Use LVM free space
@@ -260,7 +284,7 @@ def configure_disks():
     else:
         # No LVM free space, check for unused disks
         disks = find_unused_whole_disks()
-        configure_regular_disks(disks)
+        configure_regular_disks(disks, min_disk_space_gb)
 
 class ConfigureDisksCmd(BaseCmd):
     """ Command to configure disks. """
@@ -276,7 +300,8 @@ class ConfigureDisksCmd(BaseCmd):
             if os.path.exists(CLOUDRIFT_MEDIA_MOUNT):
                 print(f"{CLOUDRIFT_MEDIA_MOUNT} already exists, skipping disk configuration.")
                 return True
-            configure_disks()
+            min_disk_space_gb = float(env.get("min_disk_space_gb", MIN_DISK_SPACE_GB))
+            configure_disks(min_disk_space_gb)
             return True
         except Exception as e:
             print(f"Error configuring disks: {e}")

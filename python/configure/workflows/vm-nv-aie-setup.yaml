@@ -27,5 +27,7 @@ commands:
   - name: "ConfigureGpuPowerCmd"
   - name: "ConfigureMemoryCmd"
   - name: "ConfigureDisksCmd"
+    environment:
+      min_disk_space_gb: 3000
   - name: "CreateGrubOverrideCmd"
   - name: "VerifyGpuPowerStateCmd"
