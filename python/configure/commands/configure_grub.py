@@ -1,5 +1,5 @@
 from .cmd import BaseCmd
-from .utils import run
+from .utils import run, write_file
 from typing import Dict, Any
 import os
 import re
@@ -105,8 +105,7 @@ def create_grub_override(grub_options: Dict[str, Any]) -> bool:
         os.makedirs(GRUB_D_DIR)
 
     try:
-        with open(VFIO_GRUB_FILE, 'w') as f:
-            f.write(grub_d_content)
+        write_file(VFIO_GRUB_FILE, grub_d_content)
         print("GRUB override file created successfully.")
         return True
     except IOError as e:

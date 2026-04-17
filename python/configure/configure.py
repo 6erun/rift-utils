@@ -9,7 +9,7 @@ from typing import Dict, Any, List
 from pyparsing import ABC
 from commands import get_all_commands, get_command
 from commands.cmd import BaseCmd
-from commands.utils import numbered_prompt, reboot_prompt, yes_no_prompt
+from commands.utils import numbered_prompt, reboot_prompt, yes_no_prompt, set_dry_run, is_dry_run
 from commands.nvidia import InstallNvidiaContainerToolkitCmd, InstallNvidiaCudaToolkitCmd, InstallNvidiaDriverCmd, RemoveNvidiaDriverCmd
 from commands.apt_install import AptInstallCmd
 from commands.configure_libvirt import ConfigureLibvirtCmd, CheckVirtualizationCmd
@@ -239,7 +239,7 @@ def execute_workflow(workflow_identifier):
     """
     Execute a specific workflow by index or name.
     """
-    if os.geteuid() != 0:
+    if not is_dry_run() and os.geteuid() != 0:
         print("This script must be run with sudo.")
         sys.exit(1)
 
@@ -274,13 +274,14 @@ def execute_workflow(workflow_identifier):
     print("🎉 Workflow execution completed!")
     print("=" * 60)
 
-    reboot_server()
+    if not is_dry_run():
+        reboot_server()
 
 def execute_yaml_workflow(yaml_file_path: str):
     """
     Execute a workflow defined in a YAML file.
     """
-    if os.geteuid() != 0:
+    if not is_dry_run() and os.geteuid() != 0:
         print("This script must be run with sudo.")
         sys.exit(1)
 
@@ -317,7 +318,8 @@ def execute_yaml_workflow(yaml_file_path: str):
     print("🎉 YAML workflow execution completed!")
     print("=" * 60)
 
-    reboot_server()
+    if not is_dry_run():
+        reboot_server()
 
 def list_commands():
     """
@@ -337,7 +339,7 @@ def execute_specific_command(command_identifier):
     """
     Execute a specific command by index or name.
     """
-    if os.geteuid() != 0:
+    if not is_dry_run() and os.geteuid() != 0:
         print("This script must be run with sudo.")
         sys.exit(1)
 
@@ -429,12 +431,24 @@ Examples:
     )
 
     parser.add_argument(
-        "--command", 
+        "--command",
         metavar="ID_OR_NAME",
         help="Execute only the specified command (by number or name)"
     )
-    
+
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview all actions without making any changes to the system"
+    )
+
     args = parser.parse_args()
+
+    if args.dry_run:
+        set_dry_run(True)
+        print("=" * 60)
+        print("DRY RUN MODE — no changes will be made to the system")
+        print("=" * 60)
     
     path = os.path.dirname(os.path.abspath(__file__)) + '/workflows'
     print("Loading workflows from:", path)

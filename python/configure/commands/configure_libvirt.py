@@ -1,6 +1,6 @@
 from .cmd import BaseCmd
 from pathlib import Path
-from .utils import run
+from .utils import run, write_file
 from typing import Any, Dict
 
 QEMU_CONF = Path("/etc/libvirt/qemu.conf")
@@ -85,8 +85,7 @@ def ensure_qemu_conf_lines() -> bool:
     # Write back if modifications were made
     if modified:
         try:
-            with QEMU_CONF.open("w") as f:
-                f.write('\n'.join(lines) + '\n')
+            write_file(QEMU_CONF, '\n'.join(lines) + '\n')
             print("Updated qemu.conf configuration.")
             return True
         except Exception as e:
