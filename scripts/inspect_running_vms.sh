@@ -24,6 +24,12 @@ for vm in "${vms[@]}"; do
     xml=$(virsh dumpxml "$vm")
     echo "${vm}:"
 
+    executor_id=$(printf '%s' "$xml" \
+        | xmllint --xpath "string(/domain/metadata//*[local-name()='label'][*[local-name()='key']='executor_id']/*[local-name()='value'])" - 2>/dev/null \
+        || true)
+    [ -z "$executor_id" ] && executor_id="<none>"
+    echo "  executor: ${executor_id}"
+
     sources=$(printf '%s' "$xml" \
         | xmllint --xpath '/domain/devices/disk/backingStore/source' - 2>/dev/null \
         || true)
