@@ -2,6 +2,7 @@
 # Print, for each running libvirt VM, its disks' immediate backingStore
 # sources and any VFIO-passthrough GPU PCI devices.
 set -euo pipefail
+shopt -s nullglob
 
 for cmd in virsh xmllint lspci; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -58,7 +59,25 @@ for vm in "${vms[@]}"; do
             desc=$(printf '%s' "$info" \
                 | sed -E 's/^[^ ]+ [^[]*\[03[0-9a-f]{2}\]: //' \
                 | sed -E "s/ ${vendor_id//\[/\\[}//")
+
+            dsn=$(lspci -vv -s "$addr" 2>/dev/null \
+                | grep -oE 'Device Serial Number [0-9a-f-]+' \
+                | awk '{print $NF}')
+            [ -z "$dsn" ] && dsn="<n/a>"
+
+            phys_slot="<n/a>"
+            slot_target="${addr%.*}"
+            for slot_dir in /sys/bus/pci/slots/*/; do
+                [ -r "${slot_dir}address" ] || continue
+                if [ "$(<"${slot_dir}address")" = "$slot_target" ]; then
+                    phys_slot="${slot_dir%/}"
+                    phys_slot="${phys_slot##*/}"
+                    break
+                fi
+            done
+
             echo "  gpu:     ${addr} ${vendor_id} ${desc}"
+            echo "           slot=${phys_slot} dsn=${dsn}"
             gpu_found=1
         fi
     done
