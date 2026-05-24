@@ -30,6 +30,19 @@ for vm in "${vms[@]}"; do
     [ -z "$executor_id" ] && executor_id="<none>"
     echo "  executor: ${executor_id}"
 
+    mem_kib=$(printf '%s' "$xml" | xmllint --xpath 'string(/domain/currentMemory)' - 2>/dev/null || echo 0)
+    if [ "$mem_kib" -ge 1048576 ]; then
+        mem_disp=$(awk "BEGIN{printf \"%.1f GiB\", $mem_kib/1048576}")
+    elif [ "$mem_kib" -ge 1024 ]; then
+        mem_disp=$(awk "BEGIN{printf \"%.0f MiB\", $mem_kib/1024}")
+    else
+        mem_disp="${mem_kib} KiB"
+    fi
+    echo "  memory:   ${mem_disp}"
+
+    vcpus=$(printf '%s' "$xml" | xmllint --xpath 'string(/domain/vcpu)' - 2>/dev/null || echo "?")
+    echo "  vcpus:    ${vcpus}"
+
     sources=$(printf '%s' "$xml" \
         | xmllint --xpath '/domain/devices/disk/backingStore/source' - 2>/dev/null \
         || true)
